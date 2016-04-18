@@ -2,12 +2,36 @@ import sys
 import socket
 import TCP_standard
 import multiprocessing
+import time
+
 
 
 class Sender:
     BACKLOG = 1
     INITIAL_TIMEOUT = 1
     ACK_BUFF = 16
+
+
+    #returns the sequence number of the last segment that has received ACK from the Receiver
+    #return -1 if no segment has received ACK so far
+    def last_acked_seq(self):
+        last_acked = -1
+        for seq_no_temp in self.all_seq_no:
+            if self.already_acked[seq_no_temp]:
+                last_acked = seq_no_temp
+                continue
+            else:
+                break
+        return last_acked
+
+    #returns the number of segments that has not yet received ACK
+    def remaining_segments(self):
+        count = 0
+        for seq_no_temp in self.all_seq_no:
+            if not self.already_acked[seq_no_temp]:
+                count += 1
+        return count
+
 
     def tcp_transmission(self):
         # initialize the setting
@@ -29,46 +53,48 @@ class Sender:
         # important to notice: when to join?
 
         else:
+            #make current_window_processes as a list of tuples;
+            #(seq#, process)
             current_window_processes = []
-            seg_process_dict = {}
-            #not sure if useful; keep both of them at this point
-
-            window_head_index = 0
-            window_tail_index = 0
 
             while True:
-                if self.seq_ack_dict[self.all_seq_no[-1]]:
+                #first check if all segments have been acked; if so, report success
+                if self.remaining_segments() == 0:
                     print 'Success'
                     break
 
-                # need need to think about how to design the structure here
+                #second, check if there's still need to start new process to send data
+                if self.already_sent[self.all_seq_no[-1]]:
+                    if len(current_window_processes) > 0:
+                        #at least wait until an ACK has been received
+                        current_window_processes[0][1].join()
+                    continue
+
                 if len(current_window_processes) < self.window_size:
-                    #   two possible cases: 1) we're at the end of transporting data 2) need to open more processes to send segments
-
-                    #   this part takes care of the second case
+                    #do something here
                     counter = self.window_size - len(current_window_processes)
-                    #find the sequences that need to be sent;
-                    #send w
+                    # if segments that are not sent are less than counter, push them all
+                    # else, find the next <counter> segments and open new processes
 
-                # after this step, suppose we have process 1, 2, 3, ... running; wait until at least receiving ACK from process 1
-                current_window_processes[0].join()
-
-                #   remove processes that are dead;
+                #   remove processes that are dead
                 #   if a process is dead, then it must have already received ack from the Receiver;
                 #   note that at least process 1 is finished!
-                for temp_process in current_window_processes:
-                    if not temp_process.is_alive():
-                        current_window_processes.remove(temp_process)
-
+                for temp_tuple in current_window_processes:
+                    if not temp_tuple[1].is_alive():
+                        current_window_processes.remove(temp_tuple)
                 continue
 
+
+
+    # may need to use select here; only respond when there's new info available
+    # check later; maybe it's not a problem at all, since it runs on a separate process...
     # send_and_recv sends segment and wait for ACK from Receiver; if timeout, then it resends segment
     # note that acks come in order; if packet 1, 2, 3 sent, 2 lost, it's impossible to receive ack from 3
-    # it is possible for some
     def send_and_recv(self, unpacked_segment, seq_no):
         # this function sends a TCP segment and wait for response
         # it is the receiver's responsibility to send ACK in order; receiver never send ack in wrong order
         # plus, receiver sends ack back using tcp;
+        start_time = time.clock()
         print "--sending segment-- sequence number = %d\n", seq_no
         packed_segment = TCP_standard.TCP_standard.pack_tcp_segment(unpacked_segment)
         self.send_file_sock.sendto(packed_segment, (self.remote_IP, self.remote_port))
@@ -81,9 +107,14 @@ class Sender:
                     # receive ack, update dictionary
                     self.already_acked[seq_no] = True
                     break
+                else:
+                    # if received ack of previous packets, reset timeout, and keep listening to stuff
+
+                    # important!!! reset timeout here!!!
+                    self.receive_ack_sock.settimeout(self.timeout_interval - (time.clock() - start_time))
+                    continue
         except socket.timeout:
-            # what should I do here?
-            # retransmit immediately?
+            # retransmit immediately
             self.send_and_recv(unpacked_segment)
 
     def prepare_tcp_segments(self):
@@ -99,7 +130,7 @@ class Sender:
 
                 # hit the last chunk
                 # this should include the case where the file is 0 bytes
-                if (len(current_chunk) < TCP_standard.TCP_standard.MSS):
+                if len(current_chunk) < TCP_standard.TCP_standard.MSS:
                     # set FIN == 1
                     current_segment = TCP_standard.TCP_standard(self.ack_port_num, self.remote_port, sequence_no,
                                                                 expected_ack, 1, previous_chunk)
@@ -161,6 +192,8 @@ class Sender:
 
         # this dictionary keeps track of whether a segment is already acked
         self.already_acked = {}
+        # this dictionary keeps track of whether a segment is already sent
+        self.already_sent = {}
 
         # read file and store them in the above structures
         # for convenience, read the whole file in once
@@ -174,3 +207,6 @@ class Sender:
         # before file transmission, nothing is acked
         for seq_no_temp in self.all_seq_no:
             self.already_acked[seq_no_temp] = False
+
+        for seq_no_temp in self.all_seq_no:
+            self.already_sent[seq_no_temp] = False
