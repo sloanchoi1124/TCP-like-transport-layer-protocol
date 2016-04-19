@@ -1,41 +1,60 @@
 import socket
 import sys
-import datetime
 from TCP_standard import TCP_standard
+import datetime
 
 
 class Receiver:
-    def rev_and_send_ack(self):
-        print "inside of rev_and_send_ack!\n"
-        with open(self.filename, 'wb') as received_file:
-            while True:
+    def log_data(self, timestamp, seq_no, ack_no, FIN):
+        with open(self.log_filename, "a") as logfile:
+
+            logfile.write('Timestamp: ' + str(timestamp) + ', ' \
+                         + 'Source: ' + str(self.IP_addr) + ':' + str(self.listening_port) + ', ' \
+                         + 'Destination: ' + str(self.sender_IP) + ':' + str(self.sender_port) + ', ' \
+                         + 'Sequence number: ' + str(seq_no) + ', ' \
+                         + 'ACK number: ' + str(ack_no) + ', ' \
+                         + 'FIN: ' + str(FIN) + '\n')
+
+    def rev_and_send_ack_1(self):
+        with open(self.filename, 'wb') as output:
+            packed_segment = self.rev_socket.recv(TCP_standard.PACKET_SIZE)
+
+            unpacked_segment = TCP_standard.unpack_tcp_segment(packed_segment)
+            print "received seq# %d\n" % unpacked_segment.sequence_no
+            next_expected_sequence_no = 0
+
+            while unpacked_segment.FIN == 0:
+                packet_valid = True
+                if TCP_standard.is_corrupted(unpacked_segment):
+                    packet_valid = False
+
+                if unpacked_segment.sequence_no != next_expected_sequence_no:
+                    packet_valid = False
+
+                if packet_valid:
+                    next_expected_sequence_no += len(unpacked_segment.data)
+                    output.write(unpacked_segment.data)
+                    timestamp = datetime.datetime.now()
+                    self.log_data(timestamp, unpacked_segment.sequence_no, unpacked_segment.ack_no, unpacked_segment.FIN)
+
+                    print "will send ack %d\n" % unpacked_segment.ack_no
+                    correct_size = str(unpacked_segment.ack_no).ljust(32)
+                    self.ack_socket.sendall(correct_size)
                 packed_segment = self.rev_socket.recv(TCP_standard.PACKET_SIZE)
                 unpacked_segment = TCP_standard.unpack_tcp_segment(packed_segment)
-                expected_seq_no = 0
+                print "received seq# %d\n" % unpacked_segment.sequence_no
 
-                #check corruption through checksum
-                #if corrupted, continue
 
-                #check if sequence number is correct; if not, ignore this case and continue
-                if unpacked_segment.sequence_no == expected_seq_no:
-                    expected_seq_no += len(unpacked_segment.data)
-                    print "printing data that I've received so far...\n"
-                    print unpacked_segment.data
-                    received_file.write(unpacked_segment.data)
-                    #send ack to sender
-                    print "about to send ack back\n"
-                    print str(unpacked_segment.ack_no) + '\n'
-                    self.ack_socket.sendall(str(unpacked_segment.ack_no))
-                    #log into log_file at here
-                else:
-                    continue
 
-                if unpacked_segment.FIN == 1:
-                    break
+            output.write(unpacked_segment.data.strip())
+            print "will send ack %s\n" % unpacked_segment.ack_no
+            self.ack_socket.sendall(str(unpacked_segment.ack_no))
+            next_expected_sequence_no += len(unpacked_segment.data.strip())
 
-            #if get out of this while loop, all segments must have been received
-            print("Transmission successful\n")
-            print("Total bytes read to " + self.filename + ': ' + str(expected_seq_no))
+            print 'Transmission successful. '
+            print 'Total bytes read to ' + self.filename + ': ' + str(next_expected_sequence_no)
+
+
 
     def __init__(self):
         self.filename = sys.argv[1]
@@ -43,11 +62,15 @@ class Receiver:
         self.sender_IP = sys.argv[3]
         self.sender_port = int(sys.argv[4])
         self.log_filename = sys.argv[5]
+        self.IP_addr = socket.gethostbyname('localhost')
+        print self.IP_addr
 
         print "inside __init__ in Receiver.py\n"
         print sys.argv
 
         # create socket for sending ACK and recving file
+
+        #detect if it's IPv6 or IPv4
         try:
             self.ack_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.ack_socket.connect((self.sender_IP, self.sender_port))
@@ -62,7 +85,7 @@ class Receiver:
             print('Failed to create rev socket(UDP): %s' % e)
 
             # now take care of receiving segments from sender
-        self.rev_and_send_ack()
+        self.rev_and_send_ack_1()
 
 
 if __name__ == "__main__":

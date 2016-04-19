@@ -1,217 +1,236 @@
 import sys
 import socket
 import TCP_standard
-import multiprocessing
 import time
+import select
+from threading import Timer
+import datetime
 
 
 class Sender:
     BACKLOG = 1
-    INITIAL_TIMEOUT = 10
+    INITIAL_TIMEOUT = 100
     ACK_BUFF = 16
 
-    # returns the sequence number of the last segment that has received ACK from the Receiver
-    # return -1 if no segment has received ACK so far
-    def last_acked_seq(self):
-        last_acked = -1
-        for seq_no_temp in self.all_seq_no:
-            if self.already_acked[seq_no_temp]:
-                last_acked = seq_no_temp
-                continue
-            else:
-                break
-        return last_acked
+    INITIAL_RTT = 1
+    RTT_ALPHA = 0.125
+    RTT_BETA = 0.25
 
-    # returns the number of segments that has not yet received ACK
-    def remaining_segments(self):
-        count = 0
-        for seq_no_temp in self.all_seq_no:
-            if not self.already_acked[seq_no_temp]:
-                count += 1
-        return count
+    def log_data(self, timestamp, sequence_no, ack_no, FIN):
+        #print 'inside log_data\n'
+        with open(self.log_filename, 'a') as logfile:
+            logfile.write('Timestamp: ' + str(timestamp) + ', ' \
+                          + 'Source: ' + str(self.IP_addr) + ':' + str(self.ack_port_num) + ', ' \
+                          + 'Destination: ' + str(self.remote_IP) + ':' + str(self.remote_port) + ', ' \
+                          + 'Sequence number: ' + str(sequence_no) + ', ' \
+                          + 'ACK number: ' + str(ack_no) + ', ' \
+                          + 'FIN: ' + str(FIN) + ', ' \
+                          + 'Estimated RTT: ' + str(self.estimated_RTT) + '\n')
 
-    def last_sent_seq(self):
-        last_sent = -1
-        for seq_no_temp in self.all_seq_no:
-            if self.already_sent[seq_no_temp]:
-                last_sent = seq_no_temp
-                continue
-            else:
-                break
-        return last_sent
-
-    def not_sent_segments(self):
-        count = 0
-        for seq_no_temp in self.all_seq_no:
-            if not self.already_sent[seq_no_temp]:
-                count += 1
-        return count
-
-    def tcp_transmission(self):
-        # initialize the setting
-        # if window_size > total number of packets, send them all
-        if self.window_size >= len(self.all_seq_no):
-            print "line 54\n"
-            all_processes = []
+    def tcp_transmission_1(self):
+        # this is a stable version for window size = 1
+        if int(self.window_size) == 1:
+            print "Handling window_size = 1"
             for seq_no_temp in self.all_seq_no:
-                # create a process to send segment and wait for ACK of that segment
-                p = multiprocessing.Process(target=self.send_and_recv,
-                                            args=(self.seq_seg_dict[seq_no_temp], seq_no_temp))
-                all_processes.append(p)
-                p.start()
+                self.send_and_receive(self.seq_seg_dict[seq_no_temp])
 
-            # wait until every process is finished; report success here
-            for process_temp in all_processes:
-                process_temp.join()
+        # when window size > 1
+        elif int(self.window_size) > 1:
+            if int(self.window_size) >= len(self.all_seq_no):
+                for seq_no_temp in self.all_seq_no:
+                    self.send_segment(self.seq_seg_dict[seq_no_temp])
 
-            print "Success!!\n"
+                # after sending, wait for response
+                expected_ack = self.seq_ack_dict[self.all_seq_no[-1]]
+                print "expected %d\n" % expected_ack
+                while 1:
+                    socket_list = [self.ack_connection]
 
-        # window_size < total number of packets; need move window
-        # important to notice: when to join?
+                    try:
+                        read_socket, write_socket, error_socket = select.select(socket_list, [], [])
+                        # every ack is packed in a 32-byte string, passed into socket...
+                        # should be enough for now...
+                        data = read_socket[0].recv(32)
+                        if not data:
+                            print 'no data!!! \n'
+                            break
+                        else:
+                            print data
+                            if int(data) == expected_ack:
+                                print "Success!\n"
+                                break
+                    except socket.error:
+                        print "socket error\n"
+            else:
+                # current_window is a list of tuple (seq#, timer)
+                # first of all, put n segments on window
+                print 'line 65\n'
+                i = 0
+                while i < int(self.window_size):
+                    seq_no_temp = self.all_seq_no[i]
+                    self.send_segment(self.seq_seg_dict[seq_no_temp])
+                    try:
+                        timer = Timer(self.timeout_interval, self.timeout_handler, [seq_no_temp])
+                        timer.start()
+                        self.current_window.append((seq_no_temp, timer))
+                    except:
+                        print "timer setting error!!"
+
+                    i += 1
+
+                print 'line 79\n'
+                print self.current_window
+                # receive
+                while True:
+
+                    socket_list = [self.ack_connection]
+                    try:
+                        read_socket, write_socket, error_socket = select.select(socket_list, [], [])
+                        data = read_socket[0].recv(32)
+                        # if data matches something on current window, get rid of that and move forward
+                        if int(data) == self.seq_ack_dict[self.all_seq_no[-1]]:
+                            # kill all threads that are still alive
+                            for temp in self.current_window:
+                                temp[1].cancel()
+                            print "Success at line 122!\n"
+                            break
+
+                        self.current_window[0][1].cancel()
+                        self.current_window = self.current_window[1:]
+                        # stop the clock here
+                        self.remaining_seq.pop(0)
+                        print 'line 136'
+
+                        # add the next element in remaining seq
+                        if len(self.remaining_seq) > 0:
+                            seq_no_temp = self.remaining_seq[0]
+                            self.send_segment(self.seq_seg_dict[seq_no_temp])
+                            timer = Timer(self.INITIAL_TIMEOUT, self.timeout_handler, [seq_no_temp])
+                            timer.start()
+                            self.current_window.append((seq_no_temp, timer))
+                        else:
+                            for temp in self.current_window:
+                                temp[1].cancel()
+                            print 'line 136\n'
+                            print 'success at line 141!\n'
+                            break
+
+                    except socket.error:
+                        print "socket error"
+                        sys.exit(1)
 
         else:
-            print "line 71\n"
-            # make current_window_processes as a list of tuples;
-            # (seq#, process)
-            current_window_processes = []
+            print "invalid window size\n"
+            sys.exit(1)
 
-            while True:
-                # first check if all segments have been ACKed; if so, report success
-                if self.remaining_segments() == 0:
-                    print 'Success'
-                    break
+    def timeout_handler(self, seq_no):
+        # need to lock this part of the code!!!! because will be changing self.current_window
+        print "inside timeout handler\n"
+        seq_index = 0
+        for temp in self.current_window:
+            if temp[0] == seq_no:
+                seq_index = temp[0]
+        # cancel the rest of the timer
+        for temp in self.current_window[seq_index:]:
+            # kill the timer process there
+            temp[1].cancel()
 
-                # second, check if there's still need to start new process to send data
-                if self.already_sent[self.all_seq_no[-1]]:
-                    if len(current_window_processes) > 0:
-                        # at least wait until an ACK has been received
-                        current_window_processes[0][1].join()
-                    continue
+        self.current_window = self.current_window[:seq_index]
+        available_slots = int(self.window_size) - len(self.current_window)
+        i = 0
+        while i < available_slots:
+            seq_no_temp = self.remaining_seq[i]
+            timer = Timer(self.INITIAL_TIMEOUT, self.timeout_handler, [seq_no_temp])
+            timer.start()
+            self.current_window.append((seq_no_temp, timer))
 
-                if len(current_window_processes) < self.window_size:
-                    # do something here
-                    counter = self.window_size - len(current_window_processes)
-                    # if segments that are not sent are less than counter, push them all
-                    if self.not_sent_segments() > counter:
-                        last_sent_index = self.all_seq_no.index(self.last_sent_seq())
-                        next_seq_index = last_sent_index + 1
-                        i = 0
-                        while i < counter:
-                            next_seq_no = self.all_seq_no[next_seq_index]
-                            next_seq_index += 1
-                            p = multiprocessing.Process(target=self.send_and_recv,
-                                                        args=(self.seq_seg_dict[next_seq_no], next_seq_no))
-                            current_window_processes.append((next_seq_no, p))
-                            self.already_sent[next_seq_no] = True
-                            p.start()
+            # must kill all timer process!!!!!!!!
 
-                        # wait for the first item in current window to receive ACK
-                        current_window_processes[0][1].join()
-
-                    else:
-                        # do something here
-                        # send the rest of all items
-                        last_sent_index = self.all_seq_no.index(self.last_sent_seq())
-                        next_seq_index = last_sent_index + 1
-                        while next_seq_index < len(self.all_seq_no):
-                            next_seq_no = self.all_seq_no[next_seq_index]
-                            next_seq_index += 1
-                            p = multiprocessing.Process(target=self.send_and_recv,
-                                                        args=(self.seq_seg_dict[next_seq_no], next_seq_no))
-                            current_window_processes.append((next_seq_no, p))
-                            self.already_sent[next_seq_no] = True
-                            p.start()
-                        # wait for the first item in current window to receive ACK
-                        current_window_processes[0][1].join()
-
-                # remove processes that are dead
-                #   if a process is dead, then it must have already received ack from the Receiver;
-                #   note that at least process 1 is finished!
-                for temp_tuple in current_window_processes:
-                    if not temp_tuple[1].is_alive():
-                        current_window_processes.remove(temp_tuple)
-                continue
-
-
-
-    # try to use select here!!!!
-    def send_and_recv_1(self, unpacked_segment, seq_no):
-        start_time = time.clock()
-        print "--sending segment-- sequence number %d\n" %seq_no
-        packe_segment = TCP_standard.TCP_standard.pack_tcp_segment(unpacked_segment)
-        self.send_file_sock.sendto(packe_segment, (self.remote_IP, self.remote_port))
-
-        #starting here, let's try select
-
-
-    # may need to use select here; only respond when there's new info available
-    # check later; maybe it's not a problem at all, since it runs on a separate process...
-    # send_and_recv sends segment and wait for ACK from Receiver; if timeout, then it resends segment
-    # note that acks come in order; if packet 1, 2, 3 sent, 2 lost, it's impossible to receive ack from 3
-    def send_and_recv(self, unpacked_segment, seq_no):
-        # this function sends a TCP segment and wait for response
-        # it is the receiver's responsibility to send ACK in order; receiver never send ack in wrong order
-        # plus, receiver sends ack back using tcp;
-        start_time = time.clock()
-        print "--sending segment-- sequence number = %d\n" % seq_no
+    # this function only send segment
+    def send_segment(self, unpacked_segment):
+        print 'inside send_segment\n'
         packed_segment = TCP_standard.TCP_standard.pack_tcp_segment(unpacked_segment)
-        self.send_file_sock.sendto(packed_segment, (self.remote_IP, self.remote_port))
         try:
+            self.send_file_sock.sendto(packed_segment, (self.remote_IP, self.remote_port))
+            timestamp = datetime.datetime.now()
+            self.log_data(timestamp, unpacked_segment.sequence_no, unpacked_segment.ack_no, unpacked_segment.FIN)
+        except socket.error:
+            print "Error when socket trying to send stuff...\n"
+            pass
 
-            self.receive_ack_sock.settimeout(self.timeout_interval)
-            # keep reading from socket;
-            while True:
-                ack_no = self.ack_connection.recv(self.ACK_BUFF)
-                #ack_no = self.receive_ack_sock.recv(self.ACK_BUFF)
-                #print "inside a process\n"
-                if len(ack_no) > 0:
-                    print "received ack_no %s\n" % ack_no
-                    print "supposed to receive ack %s\n" % self.seq_ack_dict[seq_no]
-                if int(ack_no) == self.seq_ack_dict[seq_no]:
-                    # receive ack, update dictionary
-                    print "ack correct!\n"
-                    self.already_acked[seq_no] = True
-                    break
-                else:
-                    # if received ack of previous packets, reset timeout, and keep listening to stuff
-                    # important!!! reset timeout here!!!
-                    # need to check the validity of this timeout interval!!!!!
-                    self.receive_ack_sock.settimeout(self.timeout_interval - (time.clock() - start_time))
-                    continue
+    # this is a special case!!!!
+    # this function handles the situation when window size = 1
+    def send_and_receive(self, unpacked_segment):
+        print "sent seq# %d\n" % unpacked_segment.sequence_no
+        packed_segment = TCP_standard.TCP_standard.pack_tcp_segment(unpacked_segment)
+        try:
+            self.send_file_sock.sendto(packed_segment, (self.remote_IP, self.remote_port))
+            timestamp = datetime.datetime.now()
+            self.log_data(timestamp, unpacked_segment.sequence_no, unpacked_segment.ack_no, unpacked_segment.FIN)
+
+        except socket.error:
+
+            print "Error when socket trying to send stuff...\n"
+        try:
+            self.ack_connection.settimeout(self.timeout_interval)
+            ack_no = self.ack_connection.recv(32)
+            print ack_no + '\n'
         except socket.timeout:
-            # retransmit immediately
-            print "due to timeout, retransmit\n"
-            self.send_and_recv(unpacked_segment, seq_no)
+            self.send_and_receive(unpacked_segment)
 
-    def prepare_tcp_segments(self):
+    def prepare_tcp_segments_1(self):
         with open(self.filename, "rb") as f:
-            current_chunk = f.read(TCP_standard.TCP_standard.MSS)
-            sequence_no = 0
-            expected_ack = sequence_no + len(current_chunk)
-
-            # when reading file in chunk, if returns an empty string, meaning that it hits eof
-            while current_chunk != '':
-                previous_chunk = current_chunk
+            seq_no = 0
+            # need to be able to handle reading empty file!
+            while True:
                 current_chunk = f.read(TCP_standard.TCP_standard.MSS)
+                expected_ack = seq_no + len(current_chunk)
 
-                # hit the last chunk
-                # this should include the case where the file is 0 bytes
+                if current_chunk == '':
+                    # meaning that this is the end of file...
+                    print "reach end of file!"
+                    break
                 if len(current_chunk) < TCP_standard.TCP_standard.MSS:
-                    # set FIN == 1
-                    current_segment = TCP_standard.TCP_standard(self.ack_port_num, self.remote_port, sequence_no,
-                                                                expected_ack, 1, previous_chunk)
+                    current_segment = TCP_standard.TCP_standard(self.ack_port_num, self.remote_port, seq_no,
+                                                                expected_ack, 1, current_chunk)
 
                 else:
-                    current_segment = TCP_standard.TCP_standard(self.ack_port_num, self.remote_port, sequence_no,
-                                                                expected_ack, 0, previous_chunk)
+                    current_segment = TCP_standard.TCP_standard(self.ack_port_num, self.remote_port, seq_no,
+                                                                expected_ack, 0, current_chunk)
 
-                self.all_seq_no.append(sequence_no)
-                self.seq_ack_dict[sequence_no] = expected_ack
-                self.seq_seg_dict[sequence_no] = current_segment
+                self.all_seq_no.append(seq_no)
+                self.seq_ack_dict[seq_no] = expected_ack
+                self.seq_seg_dict[seq_no] = current_segment
+                print "Message from prepare tcp segment"
+                print "seq# = %d ack = %d FIN=%d data = %s\n" % (
+                    current_segment.sequence_no, current_segment.ack_no, current_segment.FIN, current_segment.data)
 
-                sequence_no += len(previous_chunk)
-                expected_ack = sequence_no + len(current_chunk)
-            self.byte_count += sequence_no
+                seq_no += len(current_chunk)
+
+    # helper functions regarding updating RTT and stuff
+    def update_timeout_and_RTT(self, sample_RTT):
+        self.update_deviation_RTT(sample_RTT)
+        self.update_estimated_RTT(sample_RTT)
+        self.update_tiemout_interval(sample_RTT)
+
+        # tracks how long packet transmission should take
+
+    def update_estimated_RTT(self, sample_RTT):
+        # first packet transmitted
+        if self.estimated_RTT == self.INITIAL_RTT:
+            self.estimated_RTT = sample_RTT
+        else:  # formula on page 239
+            self.estimated_RTT = (1 - self.RTT_ALPHA) * self.estimated_RTT \
+                                 + self.RTT_ALPHA * sample_RTT
+
+            # tracks the variability of RTT
+
+    def update_deviation_RTT(self, sample_RTT):
+        self.deviation_RTT = (1 - self.RTT_BETA) * self.deviation_RTT + \
+                             self.RTT_BETA * abs(sample_RTT - self.estimated_RTT)
+
+    def update_tiemout_interval(self, sample_RTT):
+        self.timeout_interval = self.estimated_RTT + 4 * self.deviation_RTT
 
     def __init__(self):
 
@@ -223,10 +242,12 @@ class Sender:
         self.remote_port = int(sys.argv[3])
         self.ack_port_num = int(sys.argv[4])
         self.log_filename = sys.argv[5]
-        if sys.argv[6]:
+        if len(sys.argv) == 7:
             self.window_size = sys.argv[6]
         else:
             self.window_size = 1
+
+        self.IP_addr = socket.gethostbyname('localhost')
 
         self.byte_count = 0
 
@@ -253,8 +274,6 @@ class Sender:
             print('Failed to create receive socket (TCP): %s' % e)
             sys.exit(1)
 
-
-
         # at this point, the two sockets should be ready
         # all_seq_no keeps an in order list of sequence # of each TCP segment
         self.all_seq_no = []
@@ -272,29 +291,31 @@ class Sender:
         # for convenience, read the whole file in once
         # note that segments in seq_seg_dict are not packed; need to pack them into a TCP segments during transmission
 
+
+        self.estimated_RTT = self.INITIAL_RTT
+        self.timeout_interval = self.INITIAL_TIMEOUT
+        self.deviation_RTT = 0
+
         try:
-            self.prepare_tcp_segments()
+            self.prepare_tcp_segments_1()
         except:
             print("read file error")
-
-        # before file transmission, nothing is acked
-        for seq_no_temp in self.all_seq_no:
-            self.already_acked[seq_no_temp] = False
-
-        for seq_no_temp in self.all_seq_no:
-            self.already_sent[seq_no_temp] = False
+            exit()
 
         print "--- printing all_seq_no ---\n"
         print self.all_seq_no
 
         # start sending stuff
+        self.current_window = []
+        self.remaining_seq = self.all_seq_no
         try:
-            self.tcp_transmission()
+            self.tcp_transmission_1()
         except:
-            print("tcp_transmission() error somewhere")
+            print("tcp_transmission_1() error somewhere")
+            sys.exit(1)
 
-
-            # close socket afterwards
+        sys.exit()
+        # close socket afterwards
 
 
 if __name__ == "__main__":

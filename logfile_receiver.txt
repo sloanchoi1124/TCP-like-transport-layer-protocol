@@ -1,0 +1,5 @@
+Timestamp: 2016-04-19 16:22:51.364273, Source: 127.0.0.1:20000, Destination: localhost:20001, Sequence number: 0, ACK number: 556, FIN: 0
+Timestamp: 2016-04-19 16:22:51.365366, Source: 127.0.0.1:20000, Destination: localhost:20001, Sequence number: 556, ACK number: 1112, FIN: 0
+Timestamp: 2016-04-19 16:22:51.367576, Source: 127.0.0.1:20000, Destination: localhost:20001, Sequence number: 1112, ACK number: 1668, FIN: 0
+Timestamp: 2016-04-19 16:22:51.368910, Source: 127.0.0.1:20000, Destination: localhost:20001, Sequence number: 1668, ACK number: 2224, FIN: 0
+Timestamp: 2016-04-19 16:22:51.370027, Source: 127.0.0.1:20000, Destination: localhost:20001, Sequence number: 2224, ACK number: 2780, FIN: 0

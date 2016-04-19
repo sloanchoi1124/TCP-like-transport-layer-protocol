@@ -1,0 +1,7 @@
+Timestamp: 2016-04-19 16:22:51.363933, Source: 127.0.0.1:20001, Destination: localhost:20000, Sequence number: 0, ACK number: 556, FIN: 0, Estimated RTT: 1
+Timestamp: 2016-04-19 16:22:51.365119, Source: 127.0.0.1:20001, Destination: localhost:20000, Sequence number: 556, ACK number: 1112, FIN: 0, Estimated RTT: 1
+Timestamp: 2016-04-19 16:22:51.366318, Source: 127.0.0.1:20001, Destination: localhost:20000, Sequence number: 556, ACK number: 1112, FIN: 0, Estimated RTT: 1
+Timestamp: 2016-04-19 16:22:51.367338, Source: 127.0.0.1:20001, Destination: localhost:20000, Sequence number: 1112, ACK number: 1668, FIN: 0, Estimated RTT: 1
+Timestamp: 2016-04-19 16:22:51.368510, Source: 127.0.0.1:20001, Destination: localhost:20000, Sequence number: 1668, ACK number: 2224, FIN: 0, Estimated RTT: 1
+Timestamp: 2016-04-19 16:22:51.369744, Source: 127.0.0.1:20001, Destination: localhost:20000, Sequence number: 2224, ACK number: 2780, FIN: 0, Estimated RTT: 1
+Timestamp: 2016-04-19 16:22:51.370808, Source: 127.0.0.1:20001, Destination: localhost:20000, Sequence number: 2780, ACK number: 3023, FIN: 1, Estimated RTT: 1
