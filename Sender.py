@@ -5,15 +5,13 @@ import multiprocessing
 import time
 
 
-
 class Sender:
     BACKLOG = 1
     INITIAL_TIMEOUT = 1
     ACK_BUFF = 16
 
-
-    #returns the sequence number of the last segment that has received ACK from the Receiver
-    #return -1 if no segment has received ACK so far
+    # returns the sequence number of the last segment that has received ACK from the Receiver
+    # return -1 if no segment has received ACK so far
     def last_acked_seq(self):
         last_acked = -1
         for seq_no_temp in self.all_seq_no:
@@ -24,7 +22,7 @@ class Sender:
                 break
         return last_acked
 
-    #returns the number of segments that has not yet received ACK
+    # returns the number of segments that has not yet received ACK
     def remaining_segments(self):
         count = 0
         for seq_no_temp in self.all_seq_no:
@@ -32,6 +30,22 @@ class Sender:
                 count += 1
         return count
 
+    def last_sent_seq(self):
+        last_sent = -1
+        for seq_no_temp in self.all_seq_no:
+            if self.already_sent[seq_no_temp]:
+                last_sent = seq_no_temp
+                continue
+            else:
+                break
+        return last_sent
+
+    def not_sent_segments(self):
+        count = 0
+        for seq_no_temp in self.all_seq_no:
+            if not self.already_sent[seq_no_temp]:
+                count += 1
+        return count
 
     def tcp_transmission(self):
         # initialize the setting
@@ -53,38 +67,65 @@ class Sender:
         # important to notice: when to join?
 
         else:
-            #make current_window_processes as a list of tuples;
-            #(seq#, process)
+            # make current_window_processes as a list of tuples;
+            # (seq#, process)
             current_window_processes = []
 
             while True:
-                #first check if all segments have been acked; if so, report success
+                # first check if all segments have been ACKed; if so, report success
                 if self.remaining_segments() == 0:
                     print 'Success'
                     break
 
-                #second, check if there's still need to start new process to send data
+                # second, check if there's still need to start new process to send data
                 if self.already_sent[self.all_seq_no[-1]]:
                     if len(current_window_processes) > 0:
-                        #at least wait until an ACK has been received
+                        # at least wait until an ACK has been received
                         current_window_processes[0][1].join()
                     continue
 
                 if len(current_window_processes) < self.window_size:
-                    #do something here
+                    # do something here
                     counter = self.window_size - len(current_window_processes)
                     # if segments that are not sent are less than counter, push them all
-                    # else, find the next <counter> segments and open new processes
+                    if self.not_sent_segments() > counter:
+                        last_sent_index = self.all_seq_no.index(self.last_sent_seq())
+                        next_seq_index = last_sent_index + 1
+                        i = 0
+                        while i < counter:
+                            next_seq_no = self.all_seq_no[next_seq_index]
+                            next_seq_index += 1
+                            p = multiprocessing.Process(target=self.send_and_recv, args=(self.seq_seg_dict[next_seq_no], next_seq_no))
+                            current_window_processes.append((next_seq_no, p))
+                            self.already_sent[next_seq_no] = True
+                            p.start()
 
-                #   remove processes that are dead
+                        #wait for the first item in current window to receive ACK
+                        current_window_processes[0][1].join()
+
+                    else:
+                        # do something here
+                        # send the rest of all items
+                        last_sent_index = self.all_seq_no.index(self.last_sent_seq())
+                        next_seq_index = last_sent_index + 1
+                        while next_seq_index < len(self.all_seq_no):
+                            next_seq_no = self.all_seq_no[next_seq_index]
+                            next_seq_index += 1
+                            p = multiprocessing.Process(target=self.send_and_recv,
+                                                        args=(self.seq_seg_dict[next_seq_no], next_seq_no))
+                            current_window_processes.append((next_seq_no, p))
+                            self.already_sent[next_seq_no] = True
+                            p.start()
+                        #wait for the first item in current window to receive ACK
+                        current_window_processes[0][1].join()
+
+                # remove processes that are dead
                 #   if a process is dead, then it must have already received ack from the Receiver;
                 #   note that at least process 1 is finished!
                 for temp_tuple in current_window_processes:
                     if not temp_tuple[1].is_alive():
                         current_window_processes.remove(temp_tuple)
                 continue
-
-
 
     # may need to use select here; only respond when there's new info available
     # check later; maybe it's not a problem at all, since it runs on a separate process...
@@ -149,6 +190,8 @@ class Sender:
 
     def __init__(self):
 
+        #check argv format here!!!
+
         self.filename = sys.argv[1]
         self.remote_IP = sys.argv[2]
         self.remote_port = int(sys.argv[3])
@@ -210,3 +253,17 @@ class Sender:
 
         for seq_no_temp in self.all_seq_no:
             self.already_sent[seq_no_temp] = False
+
+        #send stuff here
+        try:
+            self.tcp_transmission()
+        except:
+            print("tcp_transmission() error somewhere")
+
+
+        #close socket afterwards
+
+    def main(self):
+        self.__init__()
+
+    main()
