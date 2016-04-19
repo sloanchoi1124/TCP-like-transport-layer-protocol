@@ -7,7 +7,7 @@ import time
 
 class Sender:
     BACKLOG = 1
-    INITIAL_TIMEOUT = 1
+    INITIAL_TIMEOUT = 10
     ACK_BUFF = 16
 
     # returns the sequence number of the last segment that has received ACK from the Receiver
@@ -95,12 +95,13 @@ class Sender:
                         while i < counter:
                             next_seq_no = self.all_seq_no[next_seq_index]
                             next_seq_index += 1
-                            p = multiprocessing.Process(target=self.send_and_recv, args=(self.seq_seg_dict[next_seq_no], next_seq_no))
+                            p = multiprocessing.Process(target=self.send_and_recv,
+                                                        args=(self.seq_seg_dict[next_seq_no], next_seq_no))
                             current_window_processes.append((next_seq_no, p))
                             self.already_sent[next_seq_no] = True
                             p.start()
 
-                        #wait for the first item in current window to receive ACK
+                        # wait for the first item in current window to receive ACK
                         current_window_processes[0][1].join()
 
                     else:
@@ -116,7 +117,7 @@ class Sender:
                             current_window_processes.append((next_seq_no, p))
                             self.already_sent[next_seq_no] = True
                             p.start()
-                        #wait for the first item in current window to receive ACK
+                        # wait for the first item in current window to receive ACK
                         current_window_processes[0][1].join()
 
                 # remove processes that are dead
@@ -127,6 +128,18 @@ class Sender:
                         current_window_processes.remove(temp_tuple)
                 continue
 
+
+
+    # try to use select here!!!!
+    def send_and_recv_1(self, unpacked_segment, seq_no):
+        start_time = time.clock()
+        print "--sending segment-- sequence number %d\n" %seq_no
+        packe_segment = TCP_standard.TCP_standard.pack_tcp_segment(unpacked_segment)
+        self.send_file_sock.sendto(packe_segment, (self.remote_IP, self.remote_port))
+
+        #starting here, let's try select
+
+
     # may need to use select here; only respond when there's new info available
     # check later; maybe it's not a problem at all, since it runs on a separate process...
     # send_and_recv sends segment and wait for ACK from Receiver; if timeout, then it resends segment
@@ -136,27 +149,32 @@ class Sender:
         # it is the receiver's responsibility to send ACK in order; receiver never send ack in wrong order
         # plus, receiver sends ack back using tcp;
         start_time = time.clock()
-        print "--sending segment-- sequence number = %d\n", seq_no
+        print "--sending segment-- sequence number = %d\n" % seq_no
         packed_segment = TCP_standard.TCP_standard.pack_tcp_segment(unpacked_segment)
         self.send_file_sock.sendto(packed_segment, (self.remote_IP, self.remote_port))
         try:
+
             self.receive_ack_sock.settimeout(self.timeout_interval)
             # keep reading from socket;
             while True:
-                ack_no = self.receive_ack_sock.recv(self.ACK_BUFF)
+                ack_no = self.ack_connection.recv(self.ACK_BUFF)
+                #ack_no = self.receive_ack_sock.recv(self.ACK_BUFF)
+                #print "inside a process\n"
+                if len(ack_no) > 0:
+                    print "received ack_no %s\n" % ack_no
                 if ack_no == self.seq_ack_dict[seq_no]:
                     # receive ack, update dictionary
                     self.already_acked[seq_no] = True
                     break
                 else:
                     # if received ack of previous packets, reset timeout, and keep listening to stuff
-
                     # important!!! reset timeout here!!!
                     self.receive_ack_sock.settimeout(self.timeout_interval - (time.clock() - start_time))
                     continue
         except socket.timeout:
             # retransmit immediately
-            self.send_and_recv(unpacked_segment)
+            print "due to timeout, retransmit\n"
+            self.send_and_recv(unpacked_segment, seq_no)
 
     def prepare_tcp_segments(self):
         with open(self.filename, "rb") as f:
@@ -190,7 +208,8 @@ class Sender:
 
     def __init__(self):
 
-        #check argv format here!!!
+        # check argv format here!!!
+        print sys.argv
 
         self.filename = sys.argv[1]
         self.remote_IP = sys.argv[2]
@@ -209,6 +228,7 @@ class Sender:
         # send socket is UDP, receive ack socket is TCP
         try:
             self.send_file_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            print "send_file_sock created successfully\n"
         except socket.error as e:
             print('Failed to create send socket (UDP): %s' % e)
             sys.exit(1)
@@ -220,10 +240,13 @@ class Sender:
             self.receive_ack_sock.bind(('localhost', self.ack_port_num))
             self.receive_ack_sock.listen(self.BACKLOG)
             self.ack_connection, self.ack_addr = self.receive_ack_sock.accept()
+            print "receive_ack_sock created successfully\n"
 
         except socket.error as e:
             print('Failed to create receive socket (TCP): %s' % e)
             sys.exit(1)
+
+
 
         # at this point, the two sockets should be ready
         # all_seq_no keeps an in order list of sequence # of each TCP segment
@@ -254,16 +277,19 @@ class Sender:
         for seq_no_temp in self.all_seq_no:
             self.already_sent[seq_no_temp] = False
 
-        #send stuff here
+        print "--- printing all_seq_no ---\n"
+        print self.all_seq_no
+
+        # start sending stuff
         try:
             self.tcp_transmission()
         except:
             print("tcp_transmission() error somewhere")
 
 
-        #close socket afterwards
+            # close socket afterwards
 
-    def main(self):
-        self.__init__()
 
-    main()
+if __name__ == "__main__":
+    print "About to start Sender\n"
+    Sender()

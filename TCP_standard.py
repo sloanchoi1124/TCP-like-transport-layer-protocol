@@ -29,6 +29,7 @@ class TCP_standard:
                            self.HEADER_SIZE, self.FIN, self.ACK,
                            str(checksum), str(self.data))
 
+    @classmethod
     def unpack_tcp_segment(self, packed_segment):
         (self.source_port, self.dest_port, self.sequence_no,
          self.ack_no, header_size, self.FIN, self.ACK, self.checksum,
@@ -40,5 +41,6 @@ class TCP_standard:
         self.dest_port = dest_port
         self.sequence_no = sequence_no
         self.ack_no = ack_no
+        self.ACK = 1
         self.FIN = FIN
         self.data = data

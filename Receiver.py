@@ -6,9 +6,10 @@ from TCP_standard import TCP_standard
 
 class Receiver:
     def rev_and_send_ack(self):
+        print "inside of rev_and_send_ack!\n"
         with open(self.filename, 'wb') as received_file:
             while True:
-                packed_segment = self.rev_socket(TCP_standard.PACKET_SIZE)
+                packed_segment = self.rev_socket.recv(TCP_standard.PACKET_SIZE)
                 unpacked_segment = TCP_standard.unpack_tcp_segment(packed_segment)
                 expected_seq_no = 0
 
@@ -20,6 +21,8 @@ class Receiver:
                     expected_seq_no += len(unpacked_segment.data)
                     received_file.write(unpacked_segment.data)
                     #send ack to sender
+                    print "about to send ackback\n"
+                    print str(unpacked_segment.ack_no) + '\n'
                     self.ack_socket.sendall(str(unpacked_segment.ack_no))
                     #log into log_file at here
                 else:
@@ -39,6 +42,9 @@ class Receiver:
         self.sender_port = int(sys.argv[4])
         self.log_filename = sys.argv[5]
 
+        print "inside __init__ in Receiver.py\n"
+        print sys.argv
+
         # create socket for sending ACK and recving file
         try:
             self.ack_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -54,8 +60,9 @@ class Receiver:
             print('Failed to create rev socket(UDP): %s' % e)
 
             # now take care of receiving segments from sender
+        self.rev_and_send_ack()
 
-    def main(self):
-        Receiver()
 
-    main()
+if __name__ == "__main__":
+    print "About to start Receiver\n"
+    Receiver()
