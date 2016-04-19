@@ -51,6 +51,7 @@ class Sender:
         # initialize the setting
         # if window_size > total number of packets, send them all
         if self.window_size >= len(self.all_seq_no):
+            print "line 54\n"
             all_processes = []
             for seq_no_temp in self.all_seq_no:
                 # create a process to send segment and wait for ACK of that segment
@@ -63,10 +64,13 @@ class Sender:
             for process_temp in all_processes:
                 process_temp.join()
 
+            print "Success!!\n"
+
         # window_size < total number of packets; need move window
         # important to notice: when to join?
 
         else:
+            print "line 71\n"
             # make current_window_processes as a list of tuples;
             # (seq#, process)
             current_window_processes = []
@@ -162,13 +166,16 @@ class Sender:
                 #print "inside a process\n"
                 if len(ack_no) > 0:
                     print "received ack_no %s\n" % ack_no
-                if ack_no == self.seq_ack_dict[seq_no]:
+                    print "supposed to receive ack %s\n" % self.seq_ack_dict[seq_no]
+                if int(ack_no) == self.seq_ack_dict[seq_no]:
                     # receive ack, update dictionary
+                    print "ack correct!\n"
                     self.already_acked[seq_no] = True
                     break
                 else:
                     # if received ack of previous packets, reset timeout, and keep listening to stuff
                     # important!!! reset timeout here!!!
+                    # need to check the validity of this timeout interval!!!!!
                     self.receive_ack_sock.settimeout(self.timeout_interval - (time.clock() - start_time))
                     continue
         except socket.timeout:

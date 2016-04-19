@@ -19,9 +19,11 @@ class Receiver:
                 #check if sequence number is correct; if not, ignore this case and continue
                 if unpacked_segment.sequence_no == expected_seq_no:
                     expected_seq_no += len(unpacked_segment.data)
+                    print "printing data that I've received so far...\n"
+                    print unpacked_segment.data
                     received_file.write(unpacked_segment.data)
                     #send ack to sender
-                    print "about to send ackback\n"
+                    print "about to send ack back\n"
                     print str(unpacked_segment.ack_no) + '\n'
                     self.ack_socket.sendall(str(unpacked_segment.ack_no))
                     #log into log_file at here
